@@ -1,0 +1,82 @@
+# Maintainer: Jadocee
+#
+# jayos-moonlander, built from the checkout this file sits in.
+#
+#   cd packaging/arch && makepkg -si
+#
+# THIS IS THE RECIPE FOR A CHECKOUT, NOT FOR A RELEASE
+#
+# Everything comes from the working tree two directories up, whatever it
+# holds -- committed or not, so somebody changing a program builds and
+# installs the change without pushing it first. JayOS carries its own recipe
+# for the other case, an install of the release it pins by tag and by commit
+# (jayos: pkgbuilds/jayos-moonlander/PKGBUILD; docs/RELEASES.md here).
+#
+# Both recipes do nothing but name their sources and call packaging/steps.sh,
+# which holds every build flag, every proof and the file list once. Its
+# header says why. The install file beside this one is the exception, since
+# makepkg reads it from here and nowhere else.
+#
+# pkgver is VERSION, written out, and Cargo.toml's version and the CLI's say
+# the same: tests/shell/test-packaging.sh holds the four to each other. A
+# pkgver() function would make makepkg rewrite this file on every build, and
+# a recipe that edits itself in a checkout is a recipe whose diff nobody can
+# read.
+
+pkgname=jayos-moonlander
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="ZSA Moonlander support for the JayOS shell: Keymapp's layer names and layout, the plug and layer popups, kontroll's commands, and the udev rule that opens the board"
+arch=('x86_64' 'aarch64')
+url="https://github.com/Jadocee/jayos-moonlander"
+license=('MIT')
+# glibc and gcc-libs for the two binaries, whose NEEDED list is libc, libm,
+# libgcc_s and the loader (steps.sh's check proves it on every build); SQLite
+# is compiled in. bash, jq, coreutils (timeout), procps-ng (pgrep), gawk and
+# grep for src/jayos-moonlander; systemd for udevadm, which the install file
+# runs, and for logind, which acts on the rule's uaccess. tests/shell/
+# test-packaging.sh holds this list, and JayOS's copy of it, to each other.
+depends=('glibc' 'gcc-libs' 'bash' 'jq' 'coreutils' 'procps-ng' 'gawk' 'grep' 'systemd')
+# Keymapp and kontroll are ZSA's, and in the AUR alone, so they are not
+# dependencies a pacman -U could satisfy: JayOS's Moonlander setup installs
+# them first, through its jayos-aur, and this package answers without them
+# -- `status` says kontroll is not installed, and the plug popups need
+# neither.
+optdepends=('zsa-keymapp-bin: Keymapp, whose API the layer, the LEDs and the names come from'
+            'zsa-kontroll: kontroll 1.0.4, the command every verb that sets something runs')
+# cargo is provided by the rustup package as well as by rust, so either
+# toolchain satisfies makepkg; git for JayOS's recipe's source line, kept
+# here so that both recipes ask for the same makedepends.
+makedepends=('cargo' 'git')
+# python3 for tests/shell's fake Keymapp and the database it writes;
+# binutils' readelf comes with base-devel.
+checkdepends=('python')
+# !lto: makepkg's lto option adds -flto=auto to C flags that reach only the
+# bundled SQLite, which the release profile's own LTO does not cover anyway.
+# !debug: the profile strips, so a -debug split package would be empty.
+options=('!lto' '!debug')
+install=jayos-moonlander.install
+source=()
+sha256sums=()
+
+# The checkout: two levels above this file. makepkg sets startdir to its
+# physical working directory already; realpath is for a caller that sets it
+# another way, as tests/shell/test-packaging.sh does.
+_tree() { realpath "$startdir/../.."; }
+_steps() { bash "$(_tree)/packaging/steps.sh" "$@"; }
+
+prepare() {
+    _steps fetch
+}
+
+build() {
+    _steps build
+}
+
+check() {
+    _steps check
+}
+
+package() {
+    _steps package "$pkgdir"
+}

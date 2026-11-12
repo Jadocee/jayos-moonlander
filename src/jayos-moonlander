@@ -1,0 +1,327 @@
+#!/usr/bin/env bash
+#
+# A ZSA keyboard, through Keymapp's API and the udev rules that open it.
+#
+#   jayos-moonlander status              JSON: available, keyboard, layer, layerName
+#   jayos-moonlander layer-names         JSON: the layer names Keymapp flashed
+#   jayos-moonlander layer <n>           switch to a layer
+#   jayos-moonlander unset-layer         return to the base layer, 0
+#   jayos-moonlander brightness up|down [steps]
+#   jayos-moonlander color <#rrggbb>     every LED that colour, until changed
+#   jayos-moonlander connect [index] | disconnect
+#   jayos-moonlander access              whether a udev rule lets you open the keyboard
+#   jayos-moonlander version             this package's version
+#
+# Exit 0 when the verb did what it says, 1 when it did not, with a line on
+# stderr saying why; `status`, `layer-names` and `access` answer in full
+# either way, since a reason is their answer.
+#
+# MOVED FROM JayOS on 2026-11-12, by the owner's call "Move all zsa moonlander
+# keyboard related stuff out of JayOS and into jayos-moonlander". These verbs
+# were JayOS's config/common/scripts/hypr/moonlander.sh, which keeps what is
+# the shell's own -- the LED colour taken from the wallpaper's palette, the
+# layer switching that follows the focused window, QWERTY for a game or a
+# while, the held-Super panel, the overlay and the setup -- and hands every
+# verb here on. Everything here asks only the board, Keymapp and the udev
+# rules, and reads nothing of the shell's: no settings.json, no palette, no
+# session. The reasoning moved with the code (docs/MOONLANDER.md).
+#
+# Keymapp serves a gRPC API, and ZSA ship `kontroll` as a CLI over it. This
+# drives kontroll rather than speaking gRPC from bash. On Linux kontroll 1.0.1
+# and later reach Keymapp over a Unix socket -- $KEYMAPP_SOCKET, else
+# .keymapp/keymapp.sock in the configuration directory -- and only Windows
+# uses the TCP port 50051 JayOS's script once tested for, so on a current
+# Keymapp it said "API is disabled" with the API on. kontroll finds the socket
+# itself and says where it looked when it is not there, so this asks kontroll
+# rather than keeping a second copy of its rule.
+#
+# Every kontroll call below is the 1.0.4 interface, run against a stand-in
+# Keymapp (docs/MOONLANDER.md): `status --json` (1.0.3 and later),
+# `set-layer --index`, `set-rgb-all --color '#rrggbb' --sustain`,
+# `connect --index` and `connect-any`, `increase-brightness`/
+# `decrease-brightness --steps`. There is no unset-layer and no absolute
+# brightness: the API has neither as a command. JayOS's script called
+# `set-layer 2`, `set-rgb-all r g b 0`, `unset-layer` and `set-brightness`,
+# which 1.0.x refuses as a usage error -- so its `layer`, `watch` and `theme`
+# changed nothing, and said nothing, since every call's output went to
+# /dev/null.
+#
+# TWO THINGS MUST BE TRUE OR NOTHING WORKS
+#   1. Keymapp is running.
+#   2. The API is started in its settings. It is OFF by default, and with it
+#      off every call fails with the socket missing rather than saying why.
+# `status` tells those two apart, and both from a Keymapp connected to no
+# keyboard, instead of reporting one failure.
+#
+# THE OTHER PROGRAM. jayos-keymapp-layers, this package's, is beside this
+# file in /usr/bin; QS_PKG_BIN_DIR or QS_PKG_BIN names another directory, in
+# JayOS's paths.sh order for a package's commands, so a suite can run a copy.
+# QS_USB_ROOT moves `/` for /sys and ZSA_UDEV_DIRS replaces udev's rule
+# directories, both for tests/shell/test-cli.sh.
+
+set -uo pipefail
+
+VERSION_TEXT=1.0.0
+LAYERS="${QS_PKG_BIN_DIR:-${QS_PKG_BIN:-/usr/bin}}/jayos-keymapp-layers"
+
+have_kontroll() { command -v kontroll >/dev/null 2>&1; }
+# Every call but `status`'s, bounded as that one is: a Keymapp that accepts the
+# connection and never answers held the call for good, and JayOS runs `color`
+# from the wallpaper's background and `layer` from a keybinding, where a stuck
+# process is one nobody sees. Five seconds, `status`'s own bound.
+kontroll_do() { timeout 5 kontroll "$@"; }
+# Only for which reason `status` gives. The process NAME, not `pgrep -f`:
+# that matched any command line mentioning keymapp -- an editor, a grep,
+# jayos-keymapp-layers -- and so said "did not answer" over a Keymapp that was
+# not running at all.
+keymapp_running() { pgrep -xi keymapp >/dev/null 2>&1; }
+
+# A layer as kontroll takes it: a run of digits. kontroll's own parser would
+# read `--stdin` or `-1` as a flag.
+is_layer() { [[ "$1" =~ ^[0-9]+$ ]]; }
+
+usage() {
+    echo "usage: $(basename "$0") status|layer-names|layer <n>|unset-layer|brightness up|down [steps]|color <#rrggbb>|connect [index]|disconnect|access|version" >&2
+    exit 1
+}
+
+case "${1:-status}" in
+    layer-names)
+        # Layer names from Keymapp's own database, through
+        # jayos-keymapp-layers, which opens that file itself, read-only --
+        # Keymapp may be running, and opening its database read-write while it
+        # holds a lock is how you corrupt someone's layout. Every failure the
+        # helper can have already prints the {"names":[],"error":"..."}
+        # envelope and exits 0 -- no database, no layout, unreadable data -- so
+        # there is no fallback for those.
+        #
+        # The helper being ABSENT is the one case it cannot report, and `exec`
+        # on a missing file makes bash write to stderr and leave with 127
+        # having printed nothing at all. JayOS's doctor runs this with
+        # `2>/dev/null` and greps `"error":"..."` out of stdout, so it would
+        # say nothing; the same shape as every other failure, then, and the
+        # sentence on stderr as well.
+        if [[ ! -x "$LAYERS" ]]; then
+            echo "jayos-keymapp-layers is not installed at $LAYERS" >&2
+            echo '{"names":[],"error":"jayos-keymapp-layers is not installed"}'
+            exit 0
+        fi
+        exec "$LAYERS"
+        ;;
+
+    status)
+        if ! have_kontroll; then
+            printf '{"available":false,"reason":"kontroll not installed"}\n'
+            exit 0
+        fi
+        if ! command -v jq >/dev/null 2>&1; then
+            printf '{"available":false,"reason":"jq is required to read kontroll status"}\n'
+            exit 0
+        fi
+
+        # kontroll's answer, or its reason for having none. Bounded, because
+        # a Keymapp that accepts the connection and never answers would hold
+        # the doctor with it.
+        if ! out=$(timeout 5 kontroll status --json 2>&1) \
+                || ! jq -e 'type == "object"' >/dev/null 2>&1 <<< "$out"; then
+            why=$(head -1 <<< "$out")
+            if grep -q -- "unexpected argument '--json'" <<< "$out"; then
+                reason="kontroll is older than 1.0.3, which added status --json — update it"
+            elif ! keymapp_running; then
+                reason="Keymapp is not running"
+            else
+                reason="Keymapp's API did not answer — start it in Keymapp's settings${why:+ ($why)}"
+            fi
+            jq -cn --arg r "$reason" '{available:false,reason:$r}'
+            exit 0
+        fi
+
+        if jq -e '.keyboard == null' >/dev/null 2>&1 <<< "$out"; then
+            jq -cn '{available:false,reason:"Keymapp is connected to no keyboard — plug it in, or connect it in Keymapp"}'
+            exit 0
+        fi
+
+        name=$(jq -r '.keyboard.friendly_name // "" | tostring' <<< "$out")
+        cur_layer=$(jq -r '.keyboard.current_layer // 0 | tostring' <<< "$out")
+        is_layer "$cur_layer" || cur_layer=0
+
+        # The layer NAME as well as the number, from Keymapp's own database:
+        # kontroll reports a number, so everything downstream said "layer 3"
+        # where the keyboard's own software says "Symbols". `name` prints the
+        # one name on one line, and "" rather than the number when there is
+        # none. `</dev/null` because the helper reads an envelope on stdin
+        # when asked to, and nothing here has anything to say on it.
+        layer_name=$("$LAYERS" name "$cur_layer" 2>/dev/null </dev/null)
+        # "Layer" alone is Oryx's title for a layer nobody named, and is no
+        # name: jayos-moonlander-osd says such a layer as its number, and
+        # JayOS's held-Super panel as "Layer 2", for the reason above.
+        [[ "${layer_name,,}" == "layer" ]] && layer_name=""
+
+        # jq builds the answer, so the keyboard's product string and a layer
+        # name flashed into its firmware -- neither a value this package chose
+        # -- are escaped whole. sed escaped `"` and `\` and dropped newlines,
+        # and a tab or any other byte below 0x20 went into the JSON raw.
+        jq -cn --arg k "${name:-unknown}" --argjson l "$cur_layer" --arg n "$layer_name" \
+            '{available:true,connected:true,keyboard:$k,layer:$l,layerName:$n}'
+        ;;
+
+    layer)
+        have_kontroll || { echo "kontroll is not installed" >&2; exit 1; }
+        n="${2:-0}"
+        is_layer "$n" || { echo "layer must be a number" >&2; exit 1; }
+        kontroll_do set-layer --index "$n" >/dev/null || exit 1
+        ;;
+
+    unset-layer)
+        # The API has an UnsetLayer call and kontroll no command for it, so
+        # the way back is a set to layer 0, the base layer.
+        have_kontroll || { echo "kontroll is not installed" >&2; exit 1; }
+        kontroll_do set-layer --index 0 >/dev/null || exit 1
+        ;;
+
+    brightness)
+        # Steps, because that is all the API offers: increase or decrease by
+        # one step, kontroll repeating it --steps times, 1 to 255.
+        have_kontroll || { echo "kontroll is not installed" >&2; exit 1; }
+        # Base 10 whatever it starts with: `08` is eight steps, where bash
+        # arithmetic would refuse it as an octal number.
+        steps="${3:-1}"
+        [[ "$steps" =~ ^[0-9]{1,3}$ ]] && (( 10#$steps >= 1 && 10#$steps <= 255 )) || {
+            echo "steps must be 1 to 255" >&2; exit 1; }
+        steps=$((10#$steps))
+        case "${2:-}" in
+            up)   kontroll_do increase-brightness --steps "$steps" >/dev/null || exit 1 ;;
+            down) kontroll_do decrease-brightness --steps "$steps" >/dev/null || exit 1 ;;
+            *)    echo "usage: $(basename "$0") brightness up|down [steps]" >&2; exit 1 ;;
+        esac
+        ;;
+
+    color)
+        # Every LED one colour, held: sustain 0 means "until something else
+        # changes it", which is what a theme wants; a non-zero value would
+        # fade back after a moment. The colour is the caller's to choose --
+        # JayOS takes it from the wallpaper's palette -- and only its shape is
+        # this verb's: six hexadecimal digits, with or without the #, so
+        # nothing else reaches kontroll's parser.
+        have_kontroll || { echo "kontroll is not installed" >&2; exit 1; }
+        hex="${2:-}"
+        hex="${hex#\#}"
+        [[ "$hex" =~ ^[0-9a-fA-F]{6}$ ]] || { echo "not a colour: ${2:-nothing} (#rrggbb)" >&2; exit 1; }
+        kontroll_do set-rgb-all --color "#$hex" --sustain 0 >/dev/null || exit 1
+        printf '#%s\n' "$hex"
+        ;;
+
+    connect)
+        have_kontroll || { echo "kontroll is not installed" >&2; exit 1; }
+        if [[ -n "${2:-}" ]]; then
+            [[ "$2" =~ ^[0-9]+$ ]] || { echo "index must be a number (kontroll list)" >&2; exit 1; }
+            kontroll_do connect --index "$2" >/dev/null || exit 1
+        else
+            kontroll_do connect-any >/dev/null || exit 1
+        fi
+        ;;
+
+    disconnect)
+        have_kontroll || { echo "kontroll is not installed" >&2; exit 1; }
+        kontroll_do disconnect >/dev/null || exit 1
+        ;;
+
+    access)
+        # Whether a udev rule lets the person running this open a ZSA keyboard,
+        # which Keymapp has to do to read its layer, light it or flash it --
+        # and so kontroll, the layer popups and JayOS's held-Super panel with
+        # it. One line, the word before the colon the verdict: `n/a` with no
+        # ZSA keyboard on the bus and no Keymapp installed, `ok` and exit 0
+        # when a rule opens it, `no` and exit 1 when none does, with the
+        # reason. JayOS's doctor, its Keymapp install and its Moonlander setup
+        # ask here, so the three cannot disagree.
+        #
+        # This package installs one such rule, 70-zsa-uaccess.rules, into
+        # /usr/lib/udev/rules.d (share/udev/ says why that one), so on a
+        # machine with the package this answers `ok` unless a file of the same
+        # name in an earlier directory masks it with one that opens nothing.
+        #
+        # WHY NOT "A RULE NAMES 3297". That is what JayOS's doctor asked, and
+        # it said "present" over the rules Keymapp's own AUR package brings:
+        # zsa-keymapp-bin depends on zsa-udev, whose rules give the keyboard to
+        # the group plugdev -- which Arch does not create, so they open it to
+        # nobody, and Keymapp could not open a keyboard the doctor called
+        # reachable. A rule counts here for what it grants: uaccess, a mode
+        # that opens it to every account, or a group that exists and the
+        # person is in. Read from the AUR's files on 2026-10-21; no real
+        # Keymapp has been run against either rule.
+        #
+        # udev reads /etc, /run, /usr/local/lib and /usr/lib, and a file masks
+        # one of the same basename in a later directory, so the first of a
+        # name is the one read.
+        usb="${QS_USB_ROOT:-}/sys/bus/usb/devices"
+        plugged=""
+        for v in "$usb"/*/idVendor; do
+            [[ "$(cat "$v" 2>/dev/null)" == 3297 ]] && { plugged=1; break; }
+        done
+        if [[ -z "$plugged" ]] && ! command -v keymapp >/dev/null 2>&1; then
+            echo "n/a: no ZSA keyboard is plugged in, and Keymapp is not installed"
+            exit 0
+        fi
+
+        read -ra dirs <<< "${ZSA_UDEV_DIRS:-/etc/udev/rules.d /run/udev/rules.d /usr/local/lib/udev/rules.d /usr/lib/udev/rules.d}"
+        declare -A first=()
+        for d in "${dirs[@]}"; do
+            for f in "$d"/*.rules; do
+                [[ -e "$f" && -z "${first[${f##*/}]:-}" ]] && first[${f##*/}]="$f"
+            done
+        done
+        mine=" $(id -nG 2>/dev/null) "
+        verdict="" said=""
+        while IFS= read -r name; do
+            # printf prints one empty line for no rules at all.
+            [[ -n "$name" ]] || continue
+            f="${first[$name]}"
+            # Comment lines out and continued lines joined, then the rules
+            # that match ZSA's vendor id, whichever of ATTR and ATTRS. No
+            # backslash before a quote: grep 3.12 warns "stray \ before" on
+            # stderr, which the doctor and the setup read with the answer.
+            while IFS= read -r rule; do
+                if [[ "$rule" =~ TAG\+?=\"uaccess\" ]]; then
+                    verdict="ok: $name opens it to whoever is at the machine"
+                elif [[ "$rule" =~ MODE:?=\"0?[0-7][0-7][2367]\" ]]; then
+                    verdict="ok: $name opens it to every account on the machine"
+                elif [[ "$rule" =~ GROUP:?=\"([^\"]+)\" ]]; then
+                    group="${BASH_REMATCH[1]}"
+                    if [[ "$mine" == *" $group "* ]]; then
+                        verdict="ok: $name gives it to $group, which you are in"
+                    elif [[ -n "$said" ]]; then
+                        :
+                    elif ! getent group "$group" >/dev/null 2>&1; then
+                        said="$name gives it to the group $group, which this machine does not have"
+                    else
+                        said="$name gives it to the group $group, which you are not in"
+                    fi
+                elif [[ -z "$said" ]]; then
+                    # Not inside ${said:-...}: bash reads the apostrophe there
+                    # as a quote, and the script stops parsing.
+                    said="$name names ZSA's vendor id and opens nothing"
+                fi
+                [[ -n "$verdict" ]] && break 2
+            done < <(awk '/^[[:space:]]*#/ { next }
+                          /\\$/ { sub(/\\$/, ""); held = held $0; next }
+                          { print held $0; held = "" }' "$f" 2>/dev/null \
+                     | grep -E 'idVendor\}=="3297"')
+        done < <(printf '%s\n' "${!first[@]}" | sort)
+        if [[ -n "$verdict" ]]; then
+            echo "$verdict"
+            exit 0
+        fi
+        [[ -n "$said" ]] || said="no udev rule names ZSA's vendor id, 3297"
+        echo "no: $said"
+        exit 1
+        ;;
+
+    version)
+        # VERSION's, written out: tests/shell/test-packaging.sh holds this,
+        # Cargo.toml's and both recipes' to it.
+        printf '%s\n' "$VERSION_TEXT"
+        ;;
+
+    *) usage ;;
+esac
