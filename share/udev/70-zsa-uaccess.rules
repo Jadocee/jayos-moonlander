@@ -1,0 +1,37 @@
+# ZSA keyboards -- the Moonlander, the Voyager -- and the Moonlander's
+# bootloader, opened to whoever is sitting at the machine.
+#
+# Installed by the jayos-moonlander package into /usr/lib/udev/rules.d. JayOS
+# builds the package only from its Moonlander setup in the control room, by
+# the owner's call on 2026-10-26 that nothing of the Moonlander's is installed
+# until somebody opts in there, so the rule arrives when the setup is run and
+# not before. Until 2026-11-12 JayOS's root helper wrote it into
+# /etc/udev/rules.d (jayos-app-install's zsa-rule verb, now gone); a copy left
+# there masks this one by basename and says the same. Keymapp has to open the
+# keyboard to read its layer, light it or flash it, and kontroll, the layer
+# popups and JayOS's held-Super panel all ask Keymapp. `jayos-moonlander
+# access` says which rule opens it.
+#
+# WHY THIS AND NOT ZSA's OWN. Keymapp's AUR package, zsa-keymapp-bin, depends on
+# zsa-udev, whose rules give the keyboard to the group plugdev. Arch does not
+# create that group, so on a stock machine they open the keyboard to nobody,
+# and Keymapp starts and cannot see it -- which reads as a keyboard that is not
+# plugged in. Read from the AUR's files on 2026-10-21.
+#
+# uaccess, as JayOS's 70-dualsense-hidraw.rules does and for its reasons:
+# logind gives the seated user an ACL on the node and takes it back at logout,
+# with no group to create or join and nothing for an ssh session. The tag is
+# acted on by systemd's 73-seat-late.rules, which is why this file sorts
+# before 73.
+#
+# NOT named 50-oryx.rules or 50-wally.rules, zsa-udev's names: two packages
+# cannot own one path, and in /etc a shared name would mask that package's
+# rules rather than sit beside them.
+#
+# 3297 is ZSA's vendor id: the keyboard's raw HID node, which ATTRS finds on
+# the USB device above it, and the USB device itself, which is also how the
+# Voyager's bootloader appears. 0483:df11 is the STM32 DFU bootloader the
+# Moonlander restarts into to be flashed.
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3297", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="3297", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="df11", TAG+="uaccess"

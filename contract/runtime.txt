@@ -1,0 +1,13 @@
+# The files jayos-moonlander-osd writes and reads, and the one program of the
+# desktop's it runs, one a line as <kind> <path>. Written by hand: JayOS's
+# lock screen, held-Super panel, overlay, doctor and moonlander-osd.sh read
+# the daemon's files, and its moonlander.sh writes the note the daemon reads.
+# $RUN is $XDG_RUNTIME_DIR/quickshell, resolved as JayOS's paths.sh resolves
+# it; $SCRIPTS is JayOS's script directory, $QS_SCRIPTS_DIR or
+# ~/.config/common/scripts. tests/shell/test-osd.sh holds the daemon to each
+# line.
+writes $RUN/moonlander-osd/pid
+writes $RUN/moonlander-osd/status
+writes $RUN/moonlander-osd/layer
+reads $RUN/moonlander/announced
+runs $SCRIPTS/osd.sh show <icon> <message> "" "" <milliseconds>

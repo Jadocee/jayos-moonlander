@@ -1,0 +1,9 @@
+# rustfmt's settings, as jayos's workspace had them when these binaries lived
+# there; tools/check.sh holds the tree to them with `cargo fmt --check`.
+#
+# ONE OPTION, AND IT IS jayos's. The code was written to the full line width
+# by hand -- a short call, a struct literal or a let-else kept on one line
+# where it fits -- and rustfmt's default heuristics break those at a fraction
+# of the width. "Max" lets each of them use the whole width instead. It is a
+# stable option, so its output does not move with the toolchain.
+use_small_heuristics = "Max"

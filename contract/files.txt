@@ -1,0 +1,18 @@
+# Every path the jayos-moonlander package installs, relative to /, one a line.
+# Written by hand: the package's promise of where things are, which JayOS
+# reads to find its commands and the udev rule. A test,
+# tests/shell/test-packaging.sh, runs packaging/steps.sh's package verb and
+# holds what it installs to this list exactly, both ways.
+usr/bin/jayos-keymapp-layers
+usr/bin/jayos-moonlander
+usr/bin/jayos-moonlander-osd
+usr/lib/udev/rules.d/70-zsa-uaccess.rules
+usr/share/jayos-moonlander/contract/README.md
+usr/share/jayos-moonlander/contract/VERSION
+usr/share/jayos-moonlander/contract/files.txt
+usr/share/jayos-moonlander/contract/layers-verbs.txt
+usr/share/jayos-moonlander/contract/osd-icons.txt
+usr/share/jayos-moonlander/contract/runtime.txt
+usr/share/jayos-moonlander/contract/steps.txt
+usr/share/jayos-moonlander/contract/verbs.txt
+usr/share/licenses/jayos-moonlander/LICENSE

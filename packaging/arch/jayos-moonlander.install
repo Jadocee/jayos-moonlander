@@ -1,0 +1,36 @@
+# The udev rule, put into effect for a board already plugged in.
+#
+# The package installs /usr/lib/udev/rules.d/70-zsa-uaccess.rules. udev reads
+# a new rule only once told to, and acts on it only at a device's next event,
+# so a Moonlander plugged in before the install stayed closed until it was
+# unplugged -- which reads as Keymapp not seeing a board that is there. This
+# is what JayOS's root helper ran after it wrote the rule itself (its zsa-rule
+# verb, until 2026-11-12): reload, then a change event for the USB and hidraw
+# devices, which is where the rule's three lines match.
+#
+# Here and not left to systemd's pacman hook, because a package's post_install
+# runs before the transaction's hooks, and a trigger before the reload would
+# be judged by the old rules. A failure is said and never fails the install:
+# the rule is in place, and the board's next reconnect applies it.
+#
+# Two recipes carry this file -- packaging/arch/PKGBUILD's and JayOS's
+# pkgbuilds/jayos-moonlander -- since makepkg reads an install file from
+# beside the recipe and never from its sources; JayOS vendors this one and
+# holds its copy to it byte for byte.
+
+_zsa_udev() {
+    if udevadm control --reload-rules \
+            && udevadm trigger --action=change --subsystem-match=usb --subsystem-match=hidraw; then
+        echo "  udev has applied the rule that opens ZSA keyboards"
+    else
+        echo "  udev did not reload: plug the keyboard in again if Keymapp cannot see it"
+    fi
+}
+
+post_install() {
+    _zsa_udev
+}
+
+post_upgrade() {
+    _zsa_udev
+}
