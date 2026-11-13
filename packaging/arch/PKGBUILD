@@ -46,8 +46,9 @@ optdepends=('zsa-keymapp-bin: Keymapp, whose API the layer, the LEDs and the nam
             'zsa-kontroll: kontroll 1.0.4, the command every verb that sets something runs')
 # cargo is provided by the rustup package as well as by rust, so either
 # toolchain satisfies makepkg; git for JayOS's recipe's source line, kept
-# here so that both recipes ask for the same makedepends.
-makedepends=('cargo' 'git')
+# here so that both recipes ask for the same makedepends; and mold, which
+# packaging/steps.sh links with and refuses to build without.
+makedepends=('cargo' 'git' 'mold')
 # python3 for tests/shell's fake Keymapp and the database it writes;
 # binutils' readelf comes with base-devel.
 checkdepends=('python')
