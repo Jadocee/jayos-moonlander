@@ -21,6 +21,12 @@
 //!
 //! A fix to one copy is a fix to one copy: a change to any of these files in
 //! jayos is carried here by hand, diffed from the commit above.
+//!
+//! `paths.rs` was carried again from jayos commit 7de4e12 on 2026-11-15: its
+//! layout test cleared four of the seven names the module reads, so a desktop
+//! session's QS_HYPR_DIR, which paths.sh exports into every terminal, failed
+//! it on the owner's machine and refused jayos-bluetooth's first release. It
+//! clears all seven now, and a second test holds the list to the code.
 
 pub mod cli;
 pub mod emit;
